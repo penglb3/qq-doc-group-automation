@@ -265,4 +265,6 @@ python wechat-notify.py --dry-run --warn-days 400  # 强制走提醒分支，看
 
 - 仓库 **Settings → Actions → General → Workflow permissions** 需要允许写，否则 push 会 403；只读的话改成 “Read and write permissions”。
 - 合并后建议在 Actions 里手动 **Run workflow** 一次，先把 `keepalive` 分支建出来并确认能 push。
-- 万一以后还是被禁用（说明该规则只认默认分支的活动），把脚本改成向默认分支推空提交即可（去掉 `checkout` 的 `ref`/改 `push` 目标），也可以在 Actions 页面点 “Enable workflow” 一键恢复后观察。
+- 保险起见可以加一个仓库 Variable **`KEEPALIVE_BRANCH=main`**：改成就向默认分支推空提交（5 天一个空提交，不动代码），
+  避免“GitHub 的仓库活动是否认非默认分支”这种不确定性；确认分支方案有效的话删掉这个 Variable 即可。
+- 万一以后还是被禁用，也可以在 Actions 页面点 “Enable workflow” 一键恢复后观察。

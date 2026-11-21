@@ -10,6 +10,8 @@ name: keepalive(防止定时任务被自动禁用)
 #     之后每次在该分支上追加一个空提交，不会污染 main。
 #   - 用默认的 GITHUB_TOKEN 推送，不会触发其他 workflow。
 #   - 如果 push 报 403：Settings → Actions → General → Workflow permissions 选 “Read and write permissions”。
+#   - 如果担心 GitHub 的“仓库活动”只认默认分支，可以加一个仓库 Variable：
+#     KEEPALIVE_BRANCH=main → 改为向默认分支推空提交（5 天一个空提交，不影响代码）。
 
 on:
   schedule:
@@ -32,23 +34,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 向 keepalive 分支推一个空提交
+      - name: 向目标分支推一个空提交
+        env:
+          KEEPALIVE_BRANCH: ${{ vars.KEEPALIVE_BRANCH }}
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-          REMOTE_HEAD="$(git ls-remote --heads origin keepalive | awk '{print $1}')"
-          if [ -n "${REMOTE_HEAD}" ]; then
-            echo "keepalive 已存在（${REMOTE_HEAD}），在上面追加空提交"
-            git fetch origin keepalive
-            git checkout -B keepalive FETCH_HEAD
+          TARGET="${KEEPALIVE_BRANCH:-keepalive}"
+          CURRENT="$(git symbolic-ref --short HEAD)"
+          echo "目标分支：${TARGET}（当前检出：${CURRENT}）"
+
+          if [ "${TARGET}" = "${CURRENT}" ]; then
+            # 目标就是当前分支（例如把 KEEPALIVE_BRANCH 设成 main）：直接在它上面空提交
+            echo "在当前分支上追加空提交"
           else
-            echo "keepalive 不存在，创建空树 orphan 分支"
-            git checkout --orphan keepalive
-            git read-tree --empty
+            REMOTE_HEAD="$(git ls-remote --heads origin "${TARGET}" | awk '{print $1}')"
+            if [ -n "${REMOTE_HEAD}" ]; then
+              echo "${TARGET} 已存在（${REMOTE_HEAD}），在上面追加空提交"
+              git fetch origin "${TARGET}"
+              git checkout -B "${TARGET}" FETCH_HEAD
+            else
+              echo "${TARGET} 不存在，创建空树 orphan 分支"
+              git checkout --orphan "${TARGET}"
+              git read-tree --empty
+            fi
           fi
 
           git commit --allow-empty -m "chore(keepalive): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push origin keepalive
+          git push origin "${TARGET}"
           echo "已推送：$(git log -1 --oneline)"
