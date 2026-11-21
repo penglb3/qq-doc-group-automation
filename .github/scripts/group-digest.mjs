@@ -18,6 +18,8 @@
  *   --from-capture F   从 qq-capture-openid.mjs 产出的 JSON 里读群列表
  *   --env-file FILE    读取 export KEY="VALUE" 形式的 env 文件
  *   --no-lookup        不查询群名（省一次 API 调用）
+ *   --no-preflight     不预检群内状态（默认会查 allow_proactive_msg，提前挑出没开主动推送的群）
+ *   --allow-partial    有群被跳过/失败时仍返回 0（默认返回 1，让 Actions 变红提醒）
  *   --show-text        日志里显示完整文案（默认在 GitHub Actions 里对链接打码）
  *
  * 环境变量：QQ_BOT_APP_ID / QQ_BOT_APP_SECRET（兼容 QQ_APP_ID / QQ_APP_SECRET）
@@ -33,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 import {
   fillTemplate,
   getAccessToken,
+  getGroupBotState,
   getGroupInfo,
   loadEnvFile,
   parseArgs,
@@ -132,6 +135,10 @@ try {
 const { groups, from: groupsFrom } = resolveGroups()
 const dryRun = Boolean(args['dry-run'])
 const lookupNames = !args['no-lookup']
+// 预检：查 GET /v2/groups/{openid}/bot_state 的 allow_proactive_msg，
+// 提前把“群主没开主动推送”的群挑出来，而不是等发送时吃 40034105。
+const preflight = !args['no-preflight']
+const allowPartial = Boolean(args['allow-partial'])
 // 公开仓库的 Actions 日志是公开的：默认在 CI 里把链接里的 file/sheet id 打码，本地照常显示
 const showFullText = Boolean(args['show-text']) || process.env.GITHUB_ACTIONS !== 'true'
 const displayText = showFullText ? text : redactEnvValues(text, DOC_ENV_NAMES)
@@ -156,12 +163,15 @@ if (displayText !== text) log('（日志已对链接里的 file/sheet id 打码�
 log('------------------------------------------')
 
 let token = ''
-if (!dryRun) {
+if (!dryRun || preflight) {
   try {
     token = await getAccessToken({ appId, appSecret, log })
   } catch (err) {
-    console.error(`[digest] 取 access_token 失败：${err.message}`)
-    process.exit(1)
+    if (!dryRun) {
+      console.error(`[digest] 取 access_token 失败：${err.message}`)
+      process.exit(1)
+    }
+    warn(`[digest] 预检跳过：${err.message}`)
   }
 }
 
@@ -174,6 +184,24 @@ for (const [index, groupOpenid] of groups.entries()) {
     name = info?.group_name || info?.groupName || ''
     if (name) log(`${tag} 群名：${name}`)
   }
+
+  // 预检：群主是否允许机器人主动推送（接口不可用时返回 null，按可发送处理）
+  let botState = null
+  if (token && preflight) {
+    botState = await getGroupBotState({ token, groupOpenid, log: warn })
+    if (botState) {
+      log(`${tag} 群内状态：allow_proactive_msg=${botState.allow_proactive_msg} recv_msg_setting=${botState.recv_msg_setting || '(空)'} role=${botState.member_role || '-'}`)
+    }
+  }
+  const blocked = botState && botState.allow_proactive_msg === false
+
+  if (blocked) {
+    warn(`${tag} ⛔ 跳过：该群未允许机器人主动推送（allow_proactive_msg=false）`)
+    warn('        需要群主/管理员在群内找到机器人 → 资料页右上角设置 → 打开「主动推送/消息推送」开关')
+    results.push({ groupOpenid, ok: false, blocked: true, errCode: 40034105, message: '群主未开启主动消息（allow_proactive_msg=false）' })
+    continue
+  }
+
   if (dryRun) {
     log(`${tag} → 跳过发送（dry-run）`)
     results.push({ groupOpenid, ok: true, skipped: true })
@@ -192,9 +220,13 @@ for (const [index, groupOpenid] of groups.entries()) {
 }
 
 const okCount = results.filter((r) => r.ok).length
-const failed = results.filter((r) => !r.ok)
+const blockedResults = results.filter((r) => r.blocked)
+const failed = results.filter((r) => !r.ok && !r.blocked)
 log('================ 汇总 ================')
-log(`成功 ${okCount}/${results.length}${dryRun ? '（dry-run，未真实发送）' : ''}`)
+log(`成功 ${okCount}/${results.length}${dryRun ? '（dry-run，未真实发送）' : ''}${blockedResults.length ? `，跳过 ${blockedResults.length} 个未开主动推送的群` : ''}`)
+for (const b of blockedResults) {
+  log(`跳过：${mask(b.groupOpenid)} 群主未开启主动消息（allow_proactive_msg=false）`)
+}
 for (const f of failed) {
   log(`失败：${mask(f.groupOpenid)} err_code=${f.errCode ?? '-'} ${f.message || ''}`)
 }
@@ -206,4 +238,5 @@ if (!dryRun && failed.length) {
   log('  - 40034101/40054003 → 机器人不在该群')
 }
 log('=====================================')
-process.exit(failed.length ? 1 : 0)
+const hardFail = failed.length > 0 || (blockedResults.length > 0 && (!allowPartial || okCount === 0))
+process.exit(hardFail ? 1 : 0)

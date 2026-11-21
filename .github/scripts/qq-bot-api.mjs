@@ -203,6 +203,22 @@ export async function getGatewayUrl({ token, log = () => {} } = {}) {
   return { url: `wss://${new URL(process.env.QQ_API_BASE || DEFAULT_API_BASE).host}/websocket`, shards: 1, sessionStartLimit: null }
 }
 
+/**
+ * 查机器人在群内的状态：allow_proactive_msg（群主是否允许主动推送）等。
+ * 该接口官方标注“仅白名单机器人可用”，所以失败一律返回 null，绝不阻断主流程。
+ */
+export async function getGroupBotState({ token, groupOpenid, log = () => {} } = {}) {
+  try {
+    const r = await callOpenApi(`/v2/groups/${encodeURIComponent(groupOpenid)}/bot_state`, { token, log })
+    if (r.ok && r.json) return r.json
+    log(`[qq-api] 获取群内状态失败（${mask(groupOpenid)}）：${(r.errors || []).join('; ') || JSON.stringify(r.json)}`)
+    return null
+  } catch (err) {
+    log(`[qq-api] 获取群内状态异常（${mask(groupOpenid)}）：${err.message}`)
+    return null
+  }
+}
+
 /** 查群基本信息（群名等）。失败返回 null，不影响主流程。 */
 export async function getGroupInfo({ token, groupOpenid, log = () => {} } = {}) {
   try {
