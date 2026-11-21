@@ -347,10 +347,10 @@ export { mask }
  * 渲染 {{VAR}} 占位符（消息文案里的文档链接不落明文，运行时由 Secrets 填进来）。
  * 缺变量直接抛错，绝不把半截链接发出去。
  */
-export function fillTemplate(text, { env = process.env } = {}) {
+export function fillTemplate(text, { env = process.env, vars = null } = {}) {
   const missing = new Set()
   const rendered = String(text).replace(/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g, (whole, name) => {
-    const value = env[name]
+    const value = vars && Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : env[name]
     if (value === undefined || value === '') {
       missing.add(name)
       return whole

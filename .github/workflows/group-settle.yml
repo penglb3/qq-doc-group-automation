@@ -1,0 +1,68 @@
+name: group-settle(许愿池自动结算)
+
+# 二期：每天北京时间 22:00 读取腾讯文档智能表，按「类别」分组、按「总想要人数」排序取每组前 3，
+# 拼成结算文案后发到 QQ_GROUP_OPENID 里的所有群。
+# 定时任务只在默认分支生效；手动触发可勾 dry_run 先看文案不发消息。
+#
+# 需要配置的仓库 Secrets：
+#   QQ_BOT_APP_ID / QQ_BOT_APP_SECRET / QQ_GROUP_OPENID
+#   QQ_DOC_ACCESS_TOKEN / QQ_DOC_CLIENT_ID / QQ_DOC_OPEN_ID
+#   QQ_DOC_FILE_ID / QQ_DOC_SHEET_ID
+# 可选 Variables：QQ_API_BASE（默认 https://api.bot.qq.com）、QQ_DOC_API_BASE（默认 https://docs.qq.com）
+
+on:
+  schedule:
+    - cron: "0 14 * * *"   # 北京 22:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只计算并打印结算文案，不实际发送'
+        type: boolean
+        default: false
+      top:
+        description: '每组取前几条（默认 3）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: group-settle
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 生成并发送许愿池结算
+        env:
+          TZ: Asia/Shanghai
+          QQ_BOT_APP_ID: ${{ secrets.QQ_BOT_APP_ID }}
+          QQ_BOT_APP_SECRET: ${{ secrets.QQ_BOT_APP_SECRET }}
+          QQ_GROUP_OPENID: ${{ secrets.QQ_GROUP_OPENID }}
+          QQ_DOC_ACCESS_TOKEN: ${{ secrets.QQ_DOC_ACCESS_TOKEN }}
+          QQ_DOC_CLIENT_ID: ${{ secrets.QQ_DOC_CLIENT_ID }}
+          QQ_DOC_OPEN_ID: ${{ secrets.QQ_DOC_OPEN_ID }}
+          QQ_DOC_FILE_ID: ${{ secrets.QQ_DOC_FILE_ID }}
+          QQ_DOC_SHEET_ID: ${{ secrets.QQ_DOC_SHEET_ID }}
+          QQ_API_BASE: ${{ vars.QQ_API_BASE }}
+          QQ_DOC_API_BASE: ${{ vars.QQ_DOC_API_BASE }}
+          TOP_N: ${{ github.event.inputs.top }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          if [ -n "${TOP_N}" ]; then
+            ARGS+=(--top "${TOP_N}")
+          fi
+          node .github/scripts/group-settle.mjs ${ARGS[@]+"${ARGS[@]}"}

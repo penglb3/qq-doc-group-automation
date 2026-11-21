@@ -64,14 +64,19 @@ https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId
 ```
 .github/
 ├── messages/
-│   └── xuyuanchi-reminder.txt      一期固定文案（改文案只改这里）
+│   ├── xuyuanchi-reminder.txt      一期固定文案（改文案只改这里）
+│   └── xuyuanchi-settle.txt        二期结算文案模板（{{SETTLE_BODY}} + 文档链接占位符）
 ├── scripts/
 │   ├── qq-bot-api.mjs              共享封装：access_token / 网关 / 发群消息 / 群信息 / env 文件解析
+│   ├── qq-broadcast.mjs            共享封装：群列表解析 / 群名查询 / 主动推送预检 / 逐群广播
+│   ├── qq-doc-smartsheet.mjs       共享封装：腾讯文档智能表字段、记录查询（含 fileID 转换、翻页）
 │   ├── qq-capture-openid.mjs       一次性：抓群 group_openid（WebSocket 监听群事件）
 │   ├── qq-check-env.mjs            环境自检，可 --send-test 实测发送
-│   └── group-digest.mjs            一期：向多个群发送固定文本
+│   ├── group-digest.mjs            一期：向多个群发送固定文本
+│   └── group-settle.mjs            二期：拉智能表 → 分组排序 → 发送结算文案
 ├── workflows/
-│   └── group-digest.yml            一期定时任务
+│   ├── group-digest.yml            一期定时任务
+│   └── group-settle.yml            二期定时任务
 └── messages/
 ```
 
@@ -164,6 +169,60 @@ node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --group EEE7.
   可用 `GET /v2/groups/{group_openid}/bot_state` 查看 `allow_proactive_msg`；脚本已内置预检，会直接点名哪个群没开（`--no-preflight` 可关）。
 - 有群被跳过/失败时脚本返回非 0（Actions 变红提醒）；如果只想在“至少一个群成功”时算通过，加 `--allow-partial`。
 
-## 三、二期：许愿池自动结算（实现中）
+## 三、二期：许愿池自动结算
 
-待办：调用腾讯文档智能表 OpenAPI 拉取全部记录 → 按「类别」分组、按「总想要人数」排序取每组前 3 → 拼成结算文案 → 复用房一期的发送逻辑发到 QQ 群。
+每天北京时间 **22:00** 跑 [group-settle.yml](.github/workflows/group-settle.yml)：拉智能表 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
+
+```
+今日许愿池结算：
+同人原创：
+🥇凑友希那17cm花冠娃: 15人
+🥈【已立项】17or20 地雷ykn: 14人
+🥉17cm 947: 10人
+
+复刻：
+🥇40cm花园多惠: 25人
+🥈原尺寸 ksm 大趴趴: 13人
+🥉40cm 彩彩: 7人
+
+许愿池：可以在这里许愿想要的娃，想要人数多的娃会优先推动饼饼立项开团。
+https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId=vQSJ4P
+```
+
+### 额外需要的 Secrets（二期）
+
+| Name | 说明 |
+| --- | --- |
+| `QQ_DOC_ACCESS_TOKEN` | 腾讯文档 OAuth2 access_token（**有有效期**，2026-12-21 到期，见下方提醒） |
+| `QQ_DOC_CLIENT_ID` | 应用 Client-Id |
+| `QQ_DOC_OPEN_ID` | 授权用户 Open-Id |
+
+`QQ_DOC_FILE_ID` / `QQ_DOC_SHEET_ID` 一期已配，二期复用。
+
+### 接口与数据口径（踩坑记录）
+
+- 链路：`GET /openapi/drive/v2/util/converter?type=2&value=<URL里的ID>` 换成真实 `fileID`（形如 `300000000$xxxx`），
+  再 `POST /openapi/smartbook/v2/files/{fileID}/sheets/{sheetID}`，body 为 `{"getFields":{...}}` / `{"getRecords":{...}}`；鉴权是 `Access-Token` / `Client-Id` / `Open-Id` 三个 header，不是 Bearer。
+- 记录接口 `limit` **最大 100**，脚本按 `hasMore`/`next` 自动翻页。
+- **`总想要人数（含创建人）` 是公式列**（公式为 `COUNTA({取补集}) + 1`，其中 `取补集 = {+1 我也想要！}.FILTER(本行创建人不在其中)`），
+  智能表 API **不返回公式值**，所以脚本用 `+1 我也想要！` 的 userId 去重计数 `+ 1（创建人）` 推算；如果以后某行能直接读到公式值则优先用返回值。
+  如果某条记录是创建人自己点的 +1，理论口径会比推算值少 1（脚本可用 `--no-count-creator` 改成只数 +1）。
+- 类别顺序按表内首次出现；组内排序是稳定排序（同人数保持表内原顺序）。
+- 每日 API 配额（免费版 20000 次）：一次结算 ≈ 1 次转换 + 1 次字段 + 1 次记录，随便跑。
+
+### 本地验证
+
+```bash
+# 只计算 + 打印，不发消息（会真实读表）
+node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh --dry-run
+
+# 看每类前 N 明细、把计算结果落盘
+node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh --dry-run --print-table --out-json .local/settle.json
+
+# 真发
+node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh
+```
+
+### ⚠️ access_token 到期
+
+`QQ_DOC_ACCESS_TOKEN` 会在 **2026-12-21** 过期，过期后二期接口返回 `37019 Token 校验失败`。仓库里的 [wechat-notify.py](wechat-notify.py) 就是做到期前推送到微信的（用 `SCT_SENDKEY`），可以自己跑，也可以说一声我给它加个定时 workflow。
