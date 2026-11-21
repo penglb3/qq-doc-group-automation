@@ -11,7 +11,7 @@ name: doc-token-reminder(腾讯文档 Token 到期提醒)
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 北京 10:00
+    - cron: "12 2 * * *"   # 北京 10:12
   workflow_dispatch:
     inputs:
       warn_days:
