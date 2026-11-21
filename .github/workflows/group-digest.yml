@@ -1,0 +1,66 @@
+name: group-digest(许愿池定时提醒)
+
+# 一期：按北京时间 09:25 / 15:45 / 20:25 向 QQ_GROUP_OPENID 里的所有群发送固定文本。
+# GitHub 的 schedule 按 UTC 跑（北京时间 = UTC+8），且可能延迟几分钟到半小时，属正常现象。
+# 定时任务只在默认分支上生效；手动触发可勾选 dry_run 先看文本不发消息。
+#
+# 需要配置的仓库 Secrets（Settings → Secrets and variables → Actions）：
+#   QQ_BOT_APP_ID       机器人 AppID
+#   QQ_BOT_APP_SECRET   机器人 AppSecret
+#   QQ_GROUP_OPENID     群 openid，多个群用英文逗号分隔（用 qq-capture-openid.mjs 抓取）
+#   QQ_DOC_FILE_ID      腾讯文档智能表 fileId（拼文案里的文档链接用，仓库内不落明文）
+#   QQ_DOC_SHEET_ID     智能表 sheetId（同上）
+# 可选 Variables：
+#   QQ_API_BASE         默认 https://api.bot.qq.com
+
+on:
+  schedule:
+    - cron: "25 1 * * *"   # 北京 09:25
+    - cron: "45 7 * * *"   # 北京 15:45
+    - cron: "25 12 * * *"  # 北京 20:25
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只打印消息不实际发送'
+        type: boolean
+        default: false
+      text:
+        description: '覆盖消息文本（留空则用 .github/messages/xuyuanchi-reminder.txt）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: group-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 发送许愿池提醒
+        env:
+          TZ: Asia/Shanghai
+          QQ_BOT_APP_ID: ${{ secrets.QQ_BOT_APP_ID }}
+          QQ_BOT_APP_SECRET: ${{ secrets.QQ_BOT_APP_SECRET }}
+          QQ_GROUP_OPENID: ${{ secrets.QQ_GROUP_OPENID }}
+          QQ_DOC_FILE_ID: ${{ secrets.QQ_DOC_FILE_ID }}
+          QQ_DOC_SHEET_ID: ${{ secrets.QQ_DOC_SHEET_ID }}
+          QQ_API_BASE: ${{ vars.QQ_API_BASE }}
+          DIGEST_TEXT: ${{ github.event.inputs.text }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          node .github/scripts/group-digest.mjs ${ARGS[@]+"${ARGS[@]}"}
