@@ -140,9 +140,11 @@ Settings → Secrets and variables → Actions → **Secrets**：
 
 | 北京时间 | UTC cron |
 | --- | --- |
-| 09:25 | `25 1 * * *` |
-| 15:45 | `45 7 * * *` |
-| 20:25 | `25 12 * * *` |
+| 09:24 | `24 1 * * *` |
+| 15:47 | `47 7 * * *` |
+| 20:23 | `23 12 * * *` |
+
+（分钟数刻意错开整点和整 5 分，避开 GitHub 调度高峰，降低延迟概率。）
 
 注意事项：
 
@@ -175,7 +177,7 @@ node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --group EEE7.
 
 ## 三、二期：许愿池自动结算
 
-每天北京时间 **22:00** 跑 [group-settle.yml](.github/workflows/group-settle.yml)：拉智能表 → 过滤已立项 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
+每天北京时间 **22:14** 跑 [group-settle.yml](.github/workflows/group-settle.yml)：拉智能表 → 过滤已立项 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
 
 ```
 今日许愿池结算：
@@ -233,16 +235,17 @@ node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh
 
 `QQ_DOC_ACCESS_TOKEN` 是 OAuth2 凭证，会过期（当前这支的 JWT `exp` 是 **2026-12-21**）。过期后二期接口返回 `37019 Token 校验失败`。
 
-[doc-token-reminder.yml](.github/workflows/doc-token-reminder.yml) 每天北京时间 **10:00** 跑一次 [wechat-notify.py](wechat-notify.py)：
+[doc-token-reminder.yml](.github/workflows/doc-token-reminder.yml) 每天北京时间 **10:12** 跑一次 [wechat-notify.py](wechat-notify.py)：
 
 - 到期日**直接从 token 的 JWT `exp` 解析**，不用手工维护日期（`QQ_DOC_ACCESS_TOKEN_EXPIRE_DATE` 只作兜底）；
-- 剩余 ≤ 7 天（或已过期）时推送微信，附带更新步骤；其余时间只打印一行“还早，跳过”；
+- 剩余 ≤ 3 天（或已过期）时推送微信，附带更新步骤；其余时间只打印一行“还早，跳过”；
+  （access_token 本身只有 30 天有效期，阈值取 3 天，避免提醒过于频繁）
 - 阈值可用 `QQ_DOC_TOKEN_WARN_DAYS` / 手动触发的 `warn_days` 调整，`dry_run` 可先看推送内容。
 
 本地验证（不会真推送）：
 
 ```bash
-python wechat-notify.py --dry-run                  # 剩余 > 7 天：只打印“还早”
+python wechat-notify.py --dry-run                  # 剩余 > 3 天：只打印“还早”
 python wechat-notify.py --dry-run --warn-days 400  # 强制走提醒分支，看文案
 ```
 
