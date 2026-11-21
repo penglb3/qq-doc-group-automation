@@ -77,7 +77,8 @@ https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId
 ├── workflows/
 │   ├── group-digest.yml            一期定时任务
 │   ├── group-settle.yml            二期定时任务
-│   └── doc-token-reminder.yml      腾讯文档 token 到期提醒（定时）
+│   ├── doc-token-reminder.yml      腾讯文档 token 到期提醒（定时）
+│   └── keepalive.yml               保活：定时向 keepalive 分支推空提交
 └── messages/
 ```
 
@@ -244,3 +245,21 @@ node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh
 python wechat-notify.py --dry-run                  # 剩余 > 7 天：只打印“还早”
 python wechat-notify.py --dry-run --warn-days 400  # 强制走提醒分支，看文案
 ```
+
+## 四、保活（防止定时任务被自动禁用）
+
+公开仓库如果 **60 天内没有任何提交**，GitHub 会自动禁用所有 `schedule` 触发的 workflow
+（Actions 页面会显示 “This scheduled workflow is disabled because there hasn't been activity in this repository for at least 60 days”）。
+一期/二期的 daily 运行本身不算“仓库活动”，所以需要保活。
+
+[keepalive.yml](.github/workflows/keepalive.yml) 每 **5 天**（UTC `17 3 */5 * *`，北京 11:17）向专门的 `keepalive` 分支推一个**空提交**：
+
+- 首次运行自动创建 orphan **空树**分支（不含任何文件），之后只在该分支追加空提交，不污染 `main`；
+- 用默认 `GITHUB_TOKEN` 推送（`permissions: contents: write`），不会触发其它 workflow；
+- 60 天内至少 12 次，偶尔漏跑一次也远不到 60 天阈值。
+
+注意事项：
+
+- 仓库 **Settings → Actions → General → Workflow permissions** 需要允许写，否则 push 会 403；只读的话改成 “Read and write permissions”。
+- 合并后建议在 Actions 里手动 **Run workflow** 一次，先把 `keepalive` 分支建出来并确认能 push。
+- 万一以后还是被禁用（说明该规则只认默认分支的活动），把脚本改成向默认分支推空提交即可（去掉 `checkout` 的 `ref`/改 `push` 目标），也可以在 Actions 页面点 “Enable workflow” 一键恢复后观察。

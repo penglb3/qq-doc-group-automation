@@ -1,0 +1,54 @@
+name: keepalive(防止定时任务被自动禁用)
+
+# 公开仓库如果 60 天内没有任何提交，GitHub 会自动禁用所有 schedule 触发的 workflow
+# （Actions 页面会显示 "This scheduled workflow is disabled because there hasn't been activity..."）。
+# 本任务每 5 天向专门的 keepalive 分支推一个空提交，让仓库始终有活动。
+# 它自己也是定时任务，所以只要它每隔 <60 天成功跑一次就能自维持。
+#
+# 说明：
+#   - 分支 keepalive 首次运行自动创建为 orphan 空树分支（不含任何文件，只有空提交）；
+#     之后每次在该分支上追加一个空提交，不会污染 main。
+#   - 用默认的 GITHUB_TOKEN 推送，不会触发其他 workflow。
+#   - 如果 push 报 403：Settings → Actions → General → Workflow permissions 选 “Read and write permissions”。
+
+on:
+  schedule:
+    - cron: "17 3 */5 * *"   # 每 5 天 03:17 UTC（北京 11:17），错开整点；60 天内至少 12 次
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 向 keepalive 分支推一个空提交
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          REMOTE_HEAD="$(git ls-remote --heads origin keepalive | awk '{print $1}')"
+          if [ -n "${REMOTE_HEAD}" ]; then
+            echo "keepalive 已存在（${REMOTE_HEAD}），在上面追加空提交"
+            git fetch origin keepalive
+            git checkout -B keepalive FETCH_HEAD
+          else
+            echo "keepalive 不存在，创建空树 orphan 分支"
+            git checkout --orphan keepalive
+            git read-tree --empty
+          fi
+
+          git commit --allow-empty -m "chore(keepalive): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin keepalive
+          echo "已推送：$(git log -1 --oneline)"
