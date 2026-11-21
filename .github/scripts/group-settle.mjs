@@ -24,6 +24,9 @@
  *   --name-field S      娃名列标题（默认 娃名）
  *   --count-field S     人数列标题（默认 总想要人数，含公式列）
  *   --plusone-field S   +1 字段标题（默认 +1 我也想要！）
+ *   --status-field S    状态列标题（默认 状态通知）
+ *   --exclude-keyword S 已立项关键字，命中娃名或状态就跳过（默认 已立项）
+ *   --keep-established  不过滤已立项（默认过滤）
  *   --no-count-creator  人数只数 +1，不再 +1 个创建人
  *   --text-file FILE    结算文案模板（默认 .github/messages/xuyuanchi-settle.txt）
  *   --group ID          指定群（可重复/逗号分隔），默认取 QQ_GROUP_OPENID
@@ -113,7 +116,11 @@ const FIELD_NAMES = {
   name: typeof args['name-field'] === 'string' ? args['name-field'] : '娃名',
   count: typeof args['count-field'] === 'string' ? args['count-field'] : '总想要人数',
   plusOne: typeof args['plusone-field'] === 'string' ? args['plusone-field'] : '+1 我也想要！',
+  status: typeof args['status-field'] === 'string' ? args['status-field'] : '状态通知',
 }
+// 已立项的娃不再进许愿池结算（默认按「已立项」关键字过滤娃名和状态通知两列）
+const KEEP_ESTABLISHED = Boolean(args['keep-established'])
+const EXCLUDE_KEYWORD = typeof args['exclude-keyword'] === 'string' ? args['exclude-keyword'] : '已立项'
 
 /** 「+1 我也想要！」字段是 userId 数组，按 userId 去重 */
 function plusOneUsers(value) {
@@ -140,11 +147,13 @@ async function main() {
   const nameField = findField(fields, FIELD_NAMES.name)
   const countField = findField(fields, FIELD_NAMES.count)
   const plusOneField = findField(fields, FIELD_NAMES.plusOne)
+  const statusField = findField(fields, FIELD_NAMES.status)
 
   if (!categoryField) throw new Error(`找不到「类别」字段（${FIELD_NAMES.category}）`)
   if (!nameField) throw new Error(`找不到「娃名」字段（${FIELD_NAMES.name}）`)
   if (!plusOneField) throw new Error(`找不到「+1」字段（${FIELD_NAMES.plusOne}）`)
-  log(`[settle] 使用字段：类别=${categoryField.fieldTitle} / 娃名=${nameField.fieldTitle} / 人数=${countField ? countField.fieldTitle : '(用 +1 推算)'} / +1=${plusOneField.fieldTitle}`)
+  log(`[settle] 使用字段：类别=${categoryField.fieldTitle} / 娃名=${nameField.fieldTitle} / 人数=${countField ? countField.fieldTitle : '(用 +1 推算)'} / +1=${plusOneField.fieldTitle} / 状态=${statusField ? statusField.fieldTitle : '(无)'}`)
+  log(`[settle] 已立项过滤：${KEEP_ESTABLISHED ? '关闭（保留全部记录）' : `开启（关键字「${EXCLUDE_KEYWORD}」）`}`)
 
   const { records, total } = await getAllRecords(docCfg, { log })
   log(`[settle] 记录 ${records.length} 条（total=${total ?? '-'}）`)
@@ -154,6 +163,7 @@ async function main() {
   let computed = 0
   let skippedEmptyName = 0
   let skippedNoCategory = 0
+  let skippedEstablished = 0
   const rows = []
   for (const r of records) {
     const values = r.values || {}
@@ -165,6 +175,12 @@ async function main() {
     const category = cellText(values[categoryField.fieldTitle])
     if (!category) {
       skippedNoCategory += 1
+      continue
+    }
+    // 已立项的娃不再参与许愿池结算（娃名或状态通知命中关键字即跳过）
+    const status = statusField ? cellText(values[statusField.fieldTitle]) : ''
+    if (!KEEP_ESTABLISHED && EXCLUDE_KEYWORD && (name.includes(EXCLUDE_KEYWORD) || status.includes(EXCLUDE_KEYWORD))) {
+      skippedEstablished += 1
       continue
     }
     let count
@@ -181,21 +197,23 @@ async function main() {
     rows.push({ recordID: r.recordID, category, name, count })
   }
   log(`[settle] 有效记录 ${rows.length} 条；人数来源：公式值 ${fromFormula} 条 / +1 推算 ${computed} 条`)
+  if (skippedEstablished) log(`[settle] 跳过已立项 ${skippedEstablished} 条`)
   if (skippedEmptyName) log(`[settle] 跳过无娃名 ${skippedEmptyName} 条`)
   if (skippedNoCategory) log(`[settle] 跳过无类别 ${skippedNoCategory} 条`)
   if (rows.length === 0) throw new Error('没有可用记录（检查字段名是否匹配）')
 
-  // 3. 分组 + 排序（组内按人数降序，稳定排序保留表内原有顺序）
+  // 3. 分组 + 排序（组内按人数降序，稳定排序保留表内原有顺序；类别按第一名人数降序）
   const groups = new Map()
   for (const row of rows) {
     if (!groups.has(row.category)) groups.set(row.category, [])
     groups.get(row.category).push(row)
   }
-  const ranked = [...groups.entries()].map(([category, list]) => {
+  const ranked = [...groups.entries()].map(([category, list], index) => {
     const sorted = [...list].sort((a, b) => b.count - a.count)
-    return { category, total: list.length, top: sorted.slice(0, TOP_N) }
+    return { category, total: list.length, top: sorted.slice(0, TOP_N), firstIndex: index }
   })
-  log(`[settle] 类别 ${ranked.length} 个：${ranked.map((g) => `${g.category}(${g.total} 条)`).join(' / ')}`)
+  ranked.sort((a, b) => (b.top[0]?.count ?? 0) - (a.top[0]?.count ?? 0) || a.firstIndex - b.firstIndex)
+  log(`[settle] 类别 ${ranked.length} 个（按第一名人数降序）：${ranked.map((g) => `${g.category}(${g.total} 条/最高 ${g.top[0]?.count ?? 0})`).join(' / ')}`)
 
   if (PRINT_TABLE || DRY_RUN) {
     for (const g of ranked) {

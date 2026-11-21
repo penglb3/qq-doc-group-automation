@@ -76,9 +76,12 @@ https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId
 │   └── group-settle.mjs            二期：拉智能表 → 分组排序 → 发送结算文案
 ├── workflows/
 │   ├── group-digest.yml            一期定时任务
-│   └── group-settle.yml            二期定时任务
+│   ├── group-settle.yml            二期定时任务
+│   └── doc-token-reminder.yml      腾讯文档 token 到期提醒（定时）
 └── messages/
 ```
+
+根目录的 [wechat-notify.py](wechat-notify.py)：腾讯文档 access_token 到期检测 + Server酱微信提醒。
 
 ## 一、抓取群 openid（一次性，本机执行）
 
@@ -171,19 +174,19 @@ node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --group EEE7.
 
 ## 三、二期：许愿池自动结算
 
-每天北京时间 **22:00** 跑 [group-settle.yml](.github/workflows/group-settle.yml)：拉智能表 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
+每天北京时间 **22:00** 跑 [group-settle.yml](.github/workflows/group-settle.yml)：拉智能表 → 过滤已立项 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
 
 ```
 今日许愿池结算：
-同人原创：
-🥇凑友希那17cm花冠娃: 15人
-🥈【已立项】17or20 地雷ykn: 14人
-🥉17cm 947: 10人
-
 复刻：
 🥇40cm花园多惠: 25人
 🥈原尺寸 ksm 大趴趴: 13人
 🥉40cm 彩彩: 7人
+
+同人原创：
+🥇凑友希那17cm花冠娃: 15人
+🥈17cm 947: 10人
+🥉今井莉莎17cm花冠娃: 10人
 
 许愿池：可以在这里许愿想要的娃，想要人数多的娃会优先推动饼饼立项开团。
 https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId=vQSJ4P
@@ -193,9 +196,10 @@ https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId
 
 | Name | 说明 |
 | --- | --- |
-| `QQ_DOC_ACCESS_TOKEN` | 腾讯文档 OAuth2 access_token（**有有效期**，2026-12-21 到期，见下方提醒） |
+| `QQ_DOC_ACCESS_TOKEN` | 腾讯文档 OAuth2 access_token（**有有效期**，见下方提醒） |
 | `QQ_DOC_CLIENT_ID` | 应用 Client-Id |
 | `QQ_DOC_OPEN_ID` | 授权用户 Open-Id |
+| `SCT_SENDKEY` | Server酱 SendKey（仅 token 到期提醒用） |
 
 `QQ_DOC_FILE_ID` / `QQ_DOC_SHEET_ID` 一期已配，二期复用。
 
@@ -207,7 +211,8 @@ https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId
 - **`总想要人数（含创建人）` 是公式列**（公式为 `COUNTA({取补集}) + 1`，其中 `取补集 = {+1 我也想要！}.FILTER(本行创建人不在其中)`），
   智能表 API **不返回公式值**，所以脚本用 `+1 我也想要！` 的 userId 去重计数 `+ 1（创建人）` 推算；如果以后某行能直接读到公式值则优先用返回值。
   如果某条记录是创建人自己点的 +1，理论口径会比推算值少 1（脚本可用 `--no-count-creator` 改成只数 +1）。
-- 类别顺序按表内首次出现；组内排序是稳定排序（同人数保持表内原顺序）。
+- **已立项的娃会被过滤**：娃名或「状态通知」列命中关键字 `已立项` 就跳过（`--exclude-keyword` 可改、`--keep-established` 可关）。
+- 类别按**每组第一名的人数降序**排列；组内按人数降序、同人数保持表内原顺序。
 - 每日 API 配额（免费版 20000 次）：一次结算 ≈ 1 次转换 + 1 次字段 + 1 次记录，随便跑。
 
 ### 本地验证
@@ -223,6 +228,19 @@ node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh --dry-run --p
 node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh
 ```
 
-### ⚠️ access_token 到期
+### ⚠️ access_token 到期提醒（已有定时任务）
 
-`QQ_DOC_ACCESS_TOKEN` 会在 **2026-12-21** 过期，过期后二期接口返回 `37019 Token 校验失败`。仓库里的 [wechat-notify.py](wechat-notify.py) 就是做到期前推送到微信的（用 `SCT_SENDKEY`），可以自己跑，也可以说一声我给它加个定时 workflow。
+`QQ_DOC_ACCESS_TOKEN` 是 OAuth2 凭证，会过期（当前这支的 JWT `exp` 是 **2026-12-21**）。过期后二期接口返回 `37019 Token 校验失败`。
+
+[doc-token-reminder.yml](.github/workflows/doc-token-reminder.yml) 每天北京时间 **10:00** 跑一次 [wechat-notify.py](wechat-notify.py)：
+
+- 到期日**直接从 token 的 JWT `exp` 解析**，不用手工维护日期（`QQ_DOC_ACCESS_TOKEN_EXPIRE_DATE` 只作兜底）；
+- 剩余 ≤ 7 天（或已过期）时推送微信，附带更新步骤；其余时间只打印一行“还早，跳过”；
+- 阈值可用 `QQ_DOC_TOKEN_WARN_DAYS` / 手动触发的 `warn_days` 调整，`dry_run` 可先看推送内容。
+
+本地验证（不会真推送）：
+
+```bash
+python wechat-notify.py --dry-run                  # 剩余 > 7 天：只打印“还早”
+python wechat-notify.py --dry-run --warn-days 400  # 强制走提醒分支，看文案
+```
