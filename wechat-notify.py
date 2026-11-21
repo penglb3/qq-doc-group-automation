@@ -31,7 +31,8 @@ import sys
 import urllib.parse
 import urllib.request
 
-DEFAULT_WARN_DAYS = 7
+# An access token is only valid for 30 days, so 3 days is enough, or the warning will be too frequent.
+DEFAULT_WARN_DAYS = 3
 
 
 def parse_args():
@@ -126,10 +127,7 @@ def main():
         [
             f"到期日：**{expire_date}**（剩余 {days_left} 天）",
             "影响：二期「许愿池自动结算」会因 `37019 Token 校验失败` 而失败（一期提醒不受影响）。",
-            "处理：重新走一次腾讯文档 OAuth 授权拿新的 access_token，"
-            "然后更新 GitHub 仓库 Secrets 里的 `QQ_DOC_ACCESS_TOKEN`"
-            "（如果 client_id / open_id 也变了，一并更新 `QQ_DOC_CLIENT_ID` / `QQ_DOC_OPEN_ID`）。",
-            "更新后可在 Actions 里手动跑一次 `group-settle` 并勾选 dry_run 验证。",
+            "处理：请前往 https://docs.qq.com/open#/ 重置 Access Token。",
         ]
     )
 
