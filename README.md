@@ -90,6 +90,7 @@ QQ_BOT_APP_ID=xxx QQ_BOT_APP_SECRET=xxx node .github/scripts/qq-capture-openid.m
 然后在**每个**目标群里发一条「@机器人 任意内容」（机器人刚进群的话会收到 `GROUP_ADD_ROBOT`，无需 @）。
 脚本会自动去重、查询并打印群名，结束时输出可直接粘贴的一行 `QQ_GROUP_OPENID=openid1,openid2,...`。
 默认最长监听 900s，抓到群后 240s 没有新群自动结束；`--expect N` 可抓够 N 个就退出。
+分批抓群时加 `--merge .local/qq-openids.json` 把之前的结果并进来、`--out` 写回同一文件，就能累积成完整清单。
 
 环境自检（可选，`--send-test` 会真的发一条到已配置的群）：
 

@@ -20,13 +20,14 @@
  *   --expect N       抓够 N 个群就自动退出（默认 0 = 不限，直到超时）
  *   --idle-exit N    至少抓到 1 个群后，N 秒没有新群就退出（默认 240，0 = 关闭）
  *   --out FILE       把结果写成 JSON（默认不写）
+ *   --merge FILE     先把已有结果并进来（分几次抓群用，不会丢之前抓到的群）
  *   --verbose        打印完整事件 JSON（排查用，含昵称等，注意隐私）
  *   --env-file FILE  读取 `export KEY="VALUE"` 形式的 env 文件（不覆盖已有环境变量）
  *
  * 退出码：0 = 抓到；2 = 超时/空闲退出但一个都没抓到；1 = 凭证或连接错误。
  */
 import process from 'node:process'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import {
   getAccessToken,
   getGatewayUrl,
@@ -43,6 +44,7 @@ const HELP = `用法：node .github/scripts/qq-capture-openid.mjs [选项]
   --expect N       抓够 N 个群后退出（默认 0 = 不限）
   --idle-exit N    抓到群之后 N 秒无新群则退出（默认 240，0 = 关闭）
   --out FILE       结果写入 JSON 文件
+  --merge FILE     先合并已有结果（分多次抓群时用）
   --verbose        打印完整事件 JSON
   -h, --help       显示本帮助
 也支持：QQ_BOT_APP_ID=xxx QQ_BOT_APP_SECRET=xxx 环境变量，或 <APP_ID> <APP_SECRET> 位置参数。`
@@ -74,6 +76,7 @@ const SECONDS = Math.max(10, Number(args.seconds ?? 900) || 900)
 const EXPECT = Math.max(0, Number(args.expect ?? 0) || 0)
 const IDLE_EXIT = Math.max(0, Number(args['idle-exit'] ?? 240) || 0)
 const OUT_FILE = typeof args.out === 'string' ? args.out : ''
+const MERGE_FILE = typeof args.merge === 'string' ? args.merge : ''
 const VERBOSE = Boolean(args.verbose)
 
 const startedAt = Date.now()
@@ -82,6 +85,31 @@ const deadline = startedAt + SECONDS * 1000
 /** groupOpenid -> { groupOpenid, groupName, source, member, firstSeenAt } */
 const captured = new Map()
 let lastCaptureAt = 0
+
+// 支持在已有结果上追加（分几次抓群时不用手工拼）
+if (MERGE_FILE && existsSync(MERGE_FILE)) {
+  try {
+    const prev = JSON.parse(readFileSync(MERGE_FILE, 'utf8'))
+    const list = Array.isArray(prev.groups) ? prev.groups : []
+    for (const g of list) {
+      const id = g.group_openid || g.groupOpenid
+      if (!id || captured.has(id)) continue
+      captured.set(id, {
+        groupOpenid: id,
+        groupName: g.group_name || g.groupName || '',
+        source: g.source || 'merged',
+        member: g.member || '',
+        firstSeenAt: g.first_seen_at || g.firstSeenAt || '',
+      })
+    }
+    console.log(`[capture] 已合并历史结果 ${MERGE_FILE} 中的 ${captured.size} 个群`)
+  } catch (err) {
+    console.error(`[capture] 读取 --merge 文件失败：${err.message}`)
+    process.exit(1)
+  }
+}
+// 有历史群时，空闲计时从“现在”开始，避免刚启动就触发空闲退出
+if (captured.size > 0) lastCaptureAt = startedAt
 let finished = false
 let ws = null
 let heartbeatTimer = null
