@@ -1,12 +1,11 @@
 name: group-digest(许愿池定时提醒)
 
 # 一期：按北京时间 09:24 / 15:47 / 20:23 向 QQ_GROUP_OPENID 里的所有群发送固定文本。
-# 定时任务只在默认分支上生效；手动触发可勾选 dry_run 先看文本不发消息。
 #
-# ⚠ 调度补偿（2026-11 起）：GitHub 的 schedule 触发器排队严重，实测稳定晚到约 7 小时
-#   （见 README「定时时间」一节），所以下面 cron 写的是「目标北京时间 − 7h」再换算成 UTC，
-#   实际到达时间才接近目标。若哪天 GitHub 恢复正常（实际到达开始明显偏早），
-#   把这些 cron 换回 README 表里的「目标值」即可。改完必须合并到默认分支才会生效。
+# 触发方式（2026-11 起）：GitHub 原生 schedule 实测延迟 6–8 小时、甚至整天 0 次触发
+# （2026-11-23 全天 5 个时间点无一运行），已改用外部定时器 cron-job.org 准点调用
+# workflow_dispatch 触发。本文件因此不再配置 schedule——两者并存会在 GitHub 恢复后重复发消息。
+# 外部定时器配置见 README「触发方式」一节；手动触发可勾选 dry_run 先看文本不发消息。
 #
 # 需要配置的仓库 Secrets（Settings → Secrets and variables → Actions）：
 #   QQ_BOT_APP_ID       机器人 AppID
@@ -18,11 +17,7 @@ name: group-digest(许愿池定时提醒)
 #   QQ_API_BASE         默认 https://api.bot.qq.com
 
 on:
-  schedule:
-    # 每行 = 目标北京时间 − 7h 的等价 UTC；实际运行时间 ≈ 目标北京时间
-    - cron: "24 18 * * *"  # 目标 09:24（cron 触发 02:24 北京 / 18:24 UTC）
-    - cron: "47 0 * * *"   # 目标 15:47（cron 触发 08:47 北京 / 00:47 UTC）
-    - cron: "23 5 * * *"   # 目标 20:23（cron 触发 13:23 北京 / 05:23 UTC）
+  # 只有外部触发（cron-job.org）和手动触发；不要再加 schedule，原因见文件头
   workflow_dispatch:
     inputs:
       dry_run:

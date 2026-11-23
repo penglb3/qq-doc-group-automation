@@ -4,9 +4,9 @@ name: doc-token-reminder(腾讯文档 Token 到期提醒)
 # 剩余 <= 7 天（或已过期）就通过 Server酱 推送到个人微信，提醒去重新授权并更新 secret。
 # 到期日优先从 token 的 JWT exp 解析，不需要手工维护日期（QQ_DOC_ACCESS_TOKEN_EXPIRE_DATE 只作兜底）。
 #
-# ⚠ 调度补偿（2026-11 起）：GitHub 的 schedule 触发器排队严重，实测稳定晚到约 7 小时
-#   （见 README「定时时间」一节），所以下面 cron 写的是「目标北京时间 − 7h」再换算成 UTC，
-#   实际到达时间才接近 10:12。若哪天 GitHub 恢复正常，把 cron 换回 README 表里的目标值即可。
+# 触发方式（2026-11 起）：GitHub 原生 schedule 实测延迟 6–8 小时、甚至整天 0 次触发，
+# 已改用外部定时器 cron-job.org 准点调用 workflow_dispatch 触发；本文件不再配置 schedule
+# （两者并存会在 GitHub 恢复后重复推送）。配置见 README「触发方式」。
 #
 # 需要配置的 Secrets：
 #   SCT_SENDKEY           Server酱 SendKey
@@ -14,9 +14,7 @@ name: doc-token-reminder(腾讯文档 Token 到期提醒)
 # 可选 Variables：QQ_DOC_ACCESS_TOKEN_EXPIRE_DATE（兜底到期日，YYYY-MM-DD）、QQ_DOC_TOKEN_WARN_DAYS（默认 7）
 
 on:
-  schedule:
-    # 目标北京 10:12，cron 提前 7h 触发（03:12 北京 / 19:12 UTC 前一天）
-    - cron: "12 19 * * *"
+  # 只有外部触发（cron-job.org）和手动触发；不要再加 schedule，原因见文件头
   workflow_dispatch:
     inputs:
       warn_days:

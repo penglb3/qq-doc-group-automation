@@ -2,11 +2,11 @@ name: group-settle(许愿池自动结算)
 
 # 二期：每天北京时间 22:14 读取腾讯文档智能表，按「类别」分组、按「总想要人数」排序取每组前 3，
 # 拼成结算文案后发到 QQ_GROUP_OPENID 里的所有群。
-# 定时任务只在默认分支生效；手动触发可勾 dry_run 先看文案不发消息。
 #
-# ⚠ 调度补偿（2026-11 起）：GitHub 的 schedule 触发器排队严重，实测稳定晚到约 7 小时
-#   （见 README「定时时间」一节），所以下面 cron 写的是「目标北京时间 − 7h」再换算成 UTC，
-#   实际到达时间才接近 22:14。若哪天 GitHub 恢复正常，把 cron 换回 README 表里的目标值即可。
+# 触发方式（2026-11 起）：GitHub 原生 schedule 实测延迟 6–8 小时、甚至整天 0 次触发，
+# 已改用外部定时器 cron-job.org 准点调用 workflow_dispatch 触发；本文件不再配置 schedule
+# （两者并存会在 GitHub 恢复后重复发消息）。配置见 README「触发方式」。
+# 手动触发可勾 dry_run 先看文案不发消息。
 #
 # 需要配置的仓库 Secrets：
 #   QQ_BOT_APP_ID / QQ_BOT_APP_SECRET / QQ_GROUP_OPENID
@@ -15,9 +15,7 @@ name: group-settle(许愿池自动结算)
 # 可选 Variables：QQ_API_BASE（默认 https://api.bot.qq.com）、QQ_DOC_API_BASE（默认 https://docs.qq.com）
 
 on:
-  schedule:
-    # 目标北京 22:14，cron 提前 7h 触发（15:14 北京 / 07:14 UTC）
-    - cron: "14 7 * * *"
+  # 只有外部触发（cron-job.org）和手动触发；不要再加 schedule，原因见文件头
   workflow_dispatch:
     inputs:
       dry_run:
