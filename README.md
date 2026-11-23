@@ -136,21 +136,36 @@ Settings → Secrets and variables → Actions → **Secrets**：
 
 ### 定时时间
 
-[group-digest.yml](.github/workflows/group-digest.yml) 的 cron 按 UTC 写，对应北京时间：
+**当前 cron 已做「提前 7 小时」补偿**：GitHub 的 `schedule` 触发器自 2026-08 起排队严重，
+实测稳定晚到约 6.2–8.3 小时（`created_at == run_started_at`，即延迟全在调度器排队，不是 runner 慢；
+GitHub Status 不报 incident，社区同症状很多）。所以表里的 cron 是「目标北京时间 − 7h」的等价 UTC，
+**实际到达时间才≈目标时间**。
 
-| 北京时间 | UTC cron |
-| --- | --- |
-| 09:24 | `24 1 * * *` |
-| 15:47 | `47 7 * * *` |
-| 20:23 | `23 12 * * *` |
+| 目标（北京时间） | 实际 cron 触发（北京） | cron（UTC） |
+| --- | --- | --- |
+| 09:24 | 02:24 | `24 18 * * *` |
+| 15:47 | 08:47 | `47 0 * * *` |
+| 20:23 | 13:23 | `23 5 * * *` |
+| 22:14（结算） | 15:14 | `14 7 * * *` |
+| 10:12（token 提醒） | 03:12 | `12 19 * * *` |
 
-（分钟数刻意错开整点和整 5 分，避开 GitHub 调度高峰，降低延迟概率。）
+换算公式：`cron(UTC) = 目标北京时间 − 8h（转 UTC）− 7h（补偿）`。
+
+**补偿是权宜之计，不是终点**，因为延迟不是常数（两天内从 6h13m 漂到 7h55m），也不保证不丢触发：
+
+- **定期复查**（建议每两周）：`gh run list -R penglb3/qq-doc-group-automation --limit 10 --json name,event,createdAt`
+  对比 cron 和目标时间。如果实际到达明显**偏早**，说明 GitHub 恢复了，把 cron 换回 `目标 − 8h` 并删掉注释里的补偿说明；
+  如果延迟涨到 9h 以上，消息会越拖越晚，此时应改用外部定时器。
+- **更稳的做法**：外部定时器（cron-job.org / Cloudflare Workers Cron）准点 `POST .../actions/workflows/<file>/dispatches`
+  触发 `workflow_dispatch`（秒级启动，不受 GitHub cron 影响），保留这些 cron 只作兜底。需要 fine-grained PAT（仅本仓库 + Actions: write）。
+
+（分钟数本来就刻意错开整点和整 5 分；但自 2026-08 起 `:17`/`:23` 也一样延迟，错分钟帮助有限。）
 
 注意事项：
 
-- `schedule` 只在**默认分支**上生效；刚改完工作流要先合并/推送到默认分支。
-- GitHub 的调度可能延迟几分钟到半小时，属正常现象；如需更强的准点性，可把定时任务放到自建 cron/云函数里调用 workflow_dispatch。
+- `schedule` 只在**默认分支**上生效；刚改完工作流要先合并/推送到默认分支，否则改的 cron 不生效。
 - 同一个时间点建议不要配置重复 cron，本实现没有跨运行的去重状态，重复 cron 会重复发消息。
+- 补偿后 cron 触发时的「当前时间」不是目标时间；脚本里没有基于当前时间的内容逻辑（只有日志），改 cron 不影响文案。
 
 ### 本地验证
 
@@ -177,7 +192,7 @@ node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --group EEE7.
 
 ## 三、二期：许愿池自动结算
 
-每天北京时间 **22:14** 跑 [group-settle.yml](.github/workflows/group-settle.yml)：拉智能表 → 过滤已立项 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
+每天北京时间 **22:14** 跑 [group-settle.yml](.github/workflows/group-settle.yml)（cron 已提前 7h 补偿，见「定时时间」）：拉智能表 → 过滤已立项 → 按「类别」分组 → 按「总想要人数」降序取每组前 3 → 拼文案 → 发到 `QQ_GROUP_OPENID` 里的所有群。
 
 ```
 今日许愿池结算：
@@ -235,7 +250,7 @@ node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh
 
 `QQ_DOC_ACCESS_TOKEN` 是 OAuth2 凭证，会过期（当前这支的 JWT `exp` 是 **2026-12-21**）。过期后二期接口返回 `37019 Token 校验失败`。
 
-[doc-token-reminder.yml](.github/workflows/doc-token-reminder.yml) 每天北京时间 **10:12** 跑一次 [wechat-notify.py](wechat-notify.py)：
+[doc-token-reminder.yml](.github/workflows/doc-token-reminder.yml) 每天北京时间 **10:12** 跑一次 [wechat-notify.py](wechat-notify.py)（cron 已提前 7h 补偿，见「定时时间」）：
 
 - 到期日**直接从 token 的 JWT `exp` 解析**，不用手工维护日期（`QQ_DOC_ACCESS_TOKEN_EXPIRE_DATE` 只作兜底）；
 - 剩余 ≤ 3 天（或已过期）时推送微信，附带更新步骤；其余时间只打印一行“还早，跳过”；
