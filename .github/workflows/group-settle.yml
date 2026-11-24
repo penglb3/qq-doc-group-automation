@@ -26,6 +26,10 @@ on:
         description: '每组取前几条（默认 3）'
         required: false
         default: ''
+      min_members:
+        description: '只通知群人数 >= 该值的群（留空=不限制，小数/负数会报错）'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -59,6 +63,7 @@ jobs:
           QQ_API_BASE: ${{ vars.QQ_API_BASE }}
           QQ_DOC_API_BASE: ${{ vars.QQ_DOC_API_BASE }}
           TOP_N: ${{ github.event.inputs.top }}
+          MIN_MEMBERS: ${{ github.event.inputs.min_members }}
         run: |
           set -euo pipefail
           ARGS=()
@@ -67,5 +72,8 @@ jobs:
           fi
           if [ -n "${TOP_N}" ]; then
             ARGS+=(--top "${TOP_N}")
+          fi
+          if [ -n "${MIN_MEMBERS}" ]; then
+            ARGS+=(--min-members "${MIN_MEMBERS}")
           fi
           node .github/scripts/group-settle.mjs ${ARGS[@]+"${ARGS[@]}"}

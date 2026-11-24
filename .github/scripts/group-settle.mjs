@@ -30,6 +30,7 @@
  *   --no-count-creator  人数只数 +1，不再 +1 个创建人
  *   --text-file FILE    结算文案模板（默认 .github/messages/xuyuanchi-settle.txt）
  *   --group ID          指定群（可重复/逗号分隔），默认取 QQ_GROUP_OPENID
+ *   --min-members N     只通知 group_member_num >= N 的群（默认 0 = 不限制；也可用环境变量 MIN_MEMBERS）
  *   --env-file FILE     读取 export KEY="VALUE" 形式的 env 文件
  *   --print-table       打印每个类别的前 N（调试用）
  *   --out-json FILE     把计算结果写成 JSON（调试用）
@@ -52,7 +53,7 @@ import {
   readCredentials,
   redactEnvValues,
 } from './qq-bot-api.mjs'
-import { broadcastText, printBroadcastSummary, resolveGroupList } from './qq-broadcast.mjs'
+import { broadcastText, parseMinMembers, printBroadcastSummary, resolveGroupList } from './qq-broadcast.mjs'
 import {
   assertDocConfig,
   cellNumber,
@@ -110,6 +111,13 @@ const ALLOW_PARTIAL = Boolean(args['allow-partial'])
 const PRINT_TABLE = Boolean(args['print-table'])
 const OUT_JSON = typeof args['out-json'] === 'string' ? args['out-json'] : ''
 const SHOW_TEXT = Boolean(args['show-text']) || process.env.GITHUB_ACTIONS !== 'true'
+let MIN_MEMBERS = 0
+try {
+  MIN_MEMBERS = parseMinMembers(args['min-members'] ?? process.env.MIN_MEMBERS)
+} catch (err) {
+  console.error(`[settle] ${err.message}`)
+  process.exit(2)
+}
 const DOC_ENV_NAMES = ['QQ_DOC_FILE_ID', 'QQ_DOC_SHEET_ID']
 const FIELD_NAMES = {
   category: typeof args['category-field'] === 'string' ? args['category-field'] : '类别',
@@ -270,9 +278,10 @@ async function main() {
     process.exit(2)
   }
   log(`[settle] 群来源：${groupsFrom}，共 ${targetGroups.length} 个群`)
+  log(`[settle] 人数阈值：${MIN_MEMBERS > 0 ? `>= ${MIN_MEMBERS} 人（低于阈值的群不通知）` : '不限制'}`)
 
   let token = ''
-  if (!DRY_RUN || PREFLIGHT) {
+  if (!DRY_RUN || PREFLIGHT || MIN_MEMBERS > 0) {
     try {
       token = await getAccessToken({ appId, appSecret, log })
     } catch (err) {
@@ -284,7 +293,7 @@ async function main() {
     }
   }
 
-  const { okCount, blocked, failed, exitCode } = await broadcastText({
+  const { okCount, blocked, skippedBySize, failed, exitCode } = await broadcastText({
     token,
     groups: targetGroups,
     text,
@@ -292,10 +301,20 @@ async function main() {
     preflight: PREFLIGHT,
     lookupNames: LOOKUP,
     allowPartial: ALLOW_PARTIAL,
+    minMembers: MIN_MEMBERS,
     log,
     warn,
   })
-  printBroadcastSummary({ okCount, blocked, failed, total: targetGroups.length, dryRun: DRY_RUN, allowPartial: ALLOW_PARTIAL, log })
+  printBroadcastSummary({
+    okCount,
+    blocked,
+    skippedBySize,
+    failed,
+    total: targetGroups.length,
+    dryRun: DRY_RUN,
+    allowPartial: ALLOW_PARTIAL,
+    log,
+  })
   process.exit(exitCode)
 }
 

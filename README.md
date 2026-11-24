@@ -214,11 +214,51 @@ GitHub 调度恢复后想回到纯 GitHub：把 `schedule` 加回三份 workflow
 - 同一个时间点不要配重复 job，本实现没有跨运行的去重状态，重复触发会重复发消息。
 - 外部触发只负责「准点开始」，消息内容和数据口径不受影响（脚本不依赖运行时刻）。
 
+### 通知阈值（按群人数筛选）
+
+群规模差距大时（比如 2000 人 vs 300 人），可以让「小群少收、大群多收」：脚本会查
+`GET /v2/groups/{group_openid}/info` 的 `group_member_num`，低于阈值的群直接跳过（不算失败，退出码仍为 0）。
+
+- 入口：`--min-members N` / 环境变量 `MIN_MEMBERS` / workflow_dispatch 输入 `min_members`
+- `N = 0` 或留空 = 不限制
+- 查不到人数（接口失败/无该字段）时按「不限制」处理并打 warning——宁可多打扰一次，也不漏掉大群
+- 阈值对**一次运行里的所有群**生效，所以「不同人数不同次数」的做法是：给不同时间点的 cron-job 传不同阈值
+
+当前群规模（2026-11-25 实测）：
+
+| 群名 | 人数 |
+| --- | --- |
+| bad sob company | 1984 |
+| bsc第二帝国 | 311 |
+| BSC游戏/文字和聊天类 | 26 |
+
+例：小群每天只收 1 次提醒、大群照常 3 次——只改 cron-job 的 body：
+
+| 时间 | Request body | 谁收到 |
+| --- | --- | --- |
+| 09:24 | `{"ref":"main"}` | 全部 3 个群 |
+| 15:47 | `{"ref":"main","inputs":{"min_members":"500"}}` | 只有 1984 人的群 |
+| 20:23 | `{"ref":"main","inputs":{"min_members":"500"}}` | 只有 1984 人的群 |
+| 22:14（结算） | 同上，按需加 | — |
+
+阈值按需调，不用改代码；比如想让「300 人也算大群」，把 `500` 改成 `300` 即可。
+
+查每个群当前人数（只打印、不发消息）：
+
+```bash
+node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --dry-run --min-members 1
+```
+
+注意：传非法值（如 `5oo`、负数）会直接报错退出，不会静默当成 0。
+
 ### 本地验证
 
 ```bash
 # 只打印不发
 node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --dry-run
+
+# 只看阈值效果（500 人以下的群会被跳过）
+node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh --dry-run --min-members 500
 
 # 真实发送（群列表取 QQ_GROUP_OPENID，缺省时回退读 .local/qq-openids.json）
 node .github/scripts/group-digest.mjs --env-file ../env-secrets.sh
@@ -268,6 +308,8 @@ https://docs.qq.com/smartsheet/{{QQ_DOC_FILE_ID}}?tab={{QQ_DOC_SHEET_ID}}&viewId
 
 `QQ_DOC_FILE_ID` / `QQ_DOC_SHEET_ID` 一期已配，二期复用。
 
+二期的群筛选和一期共用同一套规则（`--min-members` / `min_members`），见「[通知阈值](#通知阈值按群人数筛选)」。
+
 ### 接口与数据口径（踩坑记录）
 
 - 链路：`GET /openapi/drive/v2/util/converter?type=2&value=<URL里的ID>` 换成真实 `fileID`（形如 `300000000$xxxx`），
@@ -288,6 +330,9 @@ node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh --dry-run
 
 # 看每类前 N 明细、把计算结果落盘
 node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh --dry-run --print-table --out-json .local/settle.json
+
+# 结算也只发给大群（500 人以上；规则同一期，见「通知阈值」）
+node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh --dry-run --min-members 500
 
 # 真发
 node .github/scripts/group-settle.mjs --env-file ../env-secrets.sh

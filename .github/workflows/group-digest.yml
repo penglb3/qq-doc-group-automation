@@ -28,6 +28,10 @@ on:
         description: '覆盖消息文本（留空则用 .github/messages/xuyuanchi-reminder.txt）'
         required: false
         default: ''
+      min_members:
+        description: '只通知群人数 >= 该值的群（留空=不限制，小数/负数会报错）'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -57,10 +61,14 @@ jobs:
           QQ_DOC_SHEET_ID: ${{ secrets.QQ_DOC_SHEET_ID }}
           QQ_API_BASE: ${{ vars.QQ_API_BASE }}
           DIGEST_TEXT: ${{ github.event.inputs.text }}
+          MIN_MEMBERS: ${{ github.event.inputs.min_members }}
         run: |
           set -euo pipefail
           ARGS=()
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
+          fi
+          if [ -n "${MIN_MEMBERS}" ]; then
+            ARGS+=(--min-members "${MIN_MEMBERS}")
           fi
           node .github/scripts/group-digest.mjs ${ARGS[@]+"${ARGS[@]}"}

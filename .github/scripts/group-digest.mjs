@@ -15,6 +15,7 @@
  *   --text TEXT        覆盖消息文本
  *   --text-file FILE   从文件读消息文本（默认 .github/messages/xuyuanchi-reminder.txt）
  *   --group ID         指定群（可重复，也可逗号分隔），默认取 QQ_GROUP_OPENID
+ *   --min-members N    只通知 group_member_num >= N 的群（默认 0 = 不限制；也可用环境变量 MIN_MEMBERS）
  *   --from-capture F   从 qq-capture-openid.mjs 产出的 JSON 里读群列表
  *   --env-file FILE    读取 export KEY="VALUE" 形式的 env 文件
  *   --no-lookup        不查询群名（省一次 API 调用）
@@ -34,7 +35,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getAccessToken, fillTemplate, loadEnvFile, parseArgs, readCredentials, redactEnvValues } from './qq-bot-api.mjs'
-import { broadcastText, printBroadcastSummary, resolveGroupList } from './qq-broadcast.mjs'
+import { broadcastText, parseMinMembers, printBroadcastSummary, resolveGroupList } from './qq-broadcast.mjs'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..')
@@ -94,6 +95,13 @@ const dryRun = Boolean(args['dry-run'])
 const preflight = !args['no-preflight']
 const allowPartial = Boolean(args['allow-partial'])
 const lookupNames = !args['no-lookup']
+let minMembers = 0
+try {
+  minMembers = parseMinMembers(args['min-members'] ?? process.env.MIN_MEMBERS)
+} catch (err) {
+  console.error(`[digest] ${err.message}`)
+  process.exit(2)
+}
 // 公开仓库的 Actions 日志是公开的：默认在 CI 里把链接里的 file/sheet id 打码，本地照常显示
 const showFullText = Boolean(args['show-text']) || process.env.GITHUB_ACTIONS !== 'true'
 const displayText = showFullText ? text : redactEnvValues(text, DOC_ENV_NAMES)
@@ -112,13 +120,14 @@ log(`时间     : ${new Date().toISOString()}（本地 ${new Date().toLocaleStri
 log(`模式     : ${dryRun ? 'DRY-RUN（只打印不发）' : '真实发送'}`)
 log(`文本来源 : ${textFrom}`)
 log(`群来源   : ${groupsFrom}，共 ${groups.length} 个群`)
+log(`人数阈值 : ${minMembers > 0 ? `>= ${minMembers} 人（低于阈值的群不通知）` : '不限制'}`)
 log('---------------- 消息内容 ----------------')
 log(displayText)
 if (displayText !== text) log('（日志已对链接里的 file/sheet id 打码；本地运行时默认显示全文）')
 log('------------------------------------------')
 
 let token = ''
-if (!dryRun || preflight) {
+if (!dryRun || preflight || minMembers > 0) {
   try {
     token = await getAccessToken({ appId, appSecret, log })
   } catch (err) {
@@ -130,7 +139,7 @@ if (!dryRun || preflight) {
   }
 }
 
-const { okCount, blocked, failed, exitCode } = await broadcastText({
+const { okCount, blocked, skippedBySize, failed, exitCode } = await broadcastText({
   token,
   groups,
   text,
@@ -138,9 +147,10 @@ const { okCount, blocked, failed, exitCode } = await broadcastText({
   preflight,
   lookupNames,
   allowPartial,
+  minMembers,
   log,
   warn,
 })
 
-printBroadcastSummary({ okCount, blocked, failed, total: groups.length, dryRun, allowPartial, log })
+printBroadcastSummary({ okCount, blocked, skippedBySize, failed, total: groups.length, dryRun, allowPartial, log })
 process.exit(exitCode)
